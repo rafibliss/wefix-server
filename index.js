@@ -231,6 +231,128 @@ app.get('/', (req, res) => {
   });
 });
 
+// --- SERVICES ROUTES (PUBLIC) ---
+/**
+ * GET /api/services
+ * Returns approved and available repair services with optional search, category, mode, sort, and limit.
+ */
+app.get('/api/services', async (req, res) => {
+  try {
+    const { search, category, serviceMode, sort, limit, page } = req.query;
+
+    const query = {
+      approvalStatus: 'approved',
+      isAvailable: true
+    };
+
+    if (category && category !== 'All') {
+      query.category = category;
+    }
+
+    if (serviceMode && serviceMode !== 'All') {
+      query.serviceMode = serviceMode;
+    }
+
+    if (search && typeof search === 'string' && search.trim()) {
+      const regex = new RegExp(search.trim(), 'i');
+      query.$or = [
+        { title: regex },
+        { category: regex },
+        { description: regex },
+        { serviceArea: regex }
+      ];
+    }
+
+    let sortOption = { createdAt: -1 };
+    if (sort === 'price_asc') {
+      sortOption = { basePrice: 1 };
+    } else if (sort === 'price_desc') {
+      sortOption = { basePrice: -1 };
+    } else if (sort === 'newest') {
+      sortOption = { createdAt: -1 };
+    }
+
+    const total = await servicesCollection.countDocuments(query);
+
+    let cursor = servicesCollection.find(query).sort(sortOption);
+
+    const parsedLimit = limit ? parseInt(limit, 10) : 0;
+    const parsedPage = page ? parseInt(page, 10) : 1;
+
+    if (parsedLimit > 0) {
+      const skip = (parsedPage - 1) * parsedLimit;
+      cursor = cursor.skip(skip).limit(parsedLimit);
+    }
+
+    const services = await cursor.toArray();
+
+    return res.status(200).json({
+      success: true,
+      count: services.length,
+      total,
+      page: parsedPage,
+      services
+    });
+  } catch (error) {
+    console.error('Error fetching services:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve services'
+    });
+  }
+});
+
+/**
+ * GET /api/services/:id
+ * Returns a single approved service with technician details
+ */
+app.get('/api/services/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    let query;
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      query = { id: id };
+    }
+
+    const service = await servicesCollection.findOne(query);
+
+    if (!service) {
+      return res.status(404).json({
+        success: false,
+        message: 'Service not found'
+      });
+    }
+
+    // Attach technician profile details
+    let technician = null;
+    if (service.technicianEmail) {
+      technician = await usersCollection.findOne(
+        { email: service.technicianEmail },
+        { projection: { name: 1, email: 1, image: 1, phone: 1, area: 1, bio: 1 } }
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      service,
+      technician: technician || {
+        name: service.technicianName,
+        email: service.technicianEmail,
+        area: service.serviceArea || '',
+        bio: ''
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching service details:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve service details'
+    });
+  }
+});
+
 // --- USER ROUTES ---
 /**
  * PATCH /api/users/profile
