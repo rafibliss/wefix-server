@@ -105,12 +105,23 @@ async function verifyToken(req, res, next) {
         // 3. Lookup active session in MongoDB 'session' collection
         try {
             if (sessionsCollection && usersCollection) {
-                const session = await sessionsCollection.findOne({ token: token });
+                // BetterAuth cookie tokens may be signed as "token.signature" or URL-encoded
+                const cleanToken = decodeURIComponent(token).split('.')[0].replace(/^s:/, '');
+
+                const session = await sessionsCollection.findOne({
+                    $or: [
+                        { token: token },
+                        { token: cleanToken }
+                    ]
+                });
+
                 if (session) {
                     const isExpired = new Date(session.expiresAt) < new Date();
                     if (!isExpired) {
                         let userQuery;
-                        if (ObjectId.isValid(session.userId)) {
+                        if (session.userId instanceof ObjectId) {
+                            userQuery = { _id: session.userId };
+                        } else if (typeof session.userId === 'string' && ObjectId.isValid(session.userId)) {
                             userQuery = { $or: [{ _id: new ObjectId(session.userId) }, { id: session.userId }] };
                         } else {
                             userQuery = { id: session.userId };
@@ -229,6 +240,294 @@ app.get('/', (req, res) => {
         database: 'connected (fixmate)',
         timestamp: new Date().toISOString()
     });
+});
+
+// ==========================================
+// --- SEED ROUTE (IDEMPOTENT SAMPLE DATA) ---
+// ==========================================
+const SEED_TECHNICIANS = [
+    {
+        name: 'Tanvir Hasan',
+        email: 'tanvir.tech@wefix.com',
+        role: 'technician',
+        phone: '+880 1711-223344',
+        area: 'Dhanmondi, Dhaka',
+        bio: 'Certified Apple & Dell hardware diagnostic specialist with 8+ years experience in micro-soldering, board repairs, and display replacements.',
+        image: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=500&q=80',
+        emailVerified: true,
+        createdAt: new Date('2026-01-10T10:00:00Z')
+    },
+    {
+        name: 'Karim Uddin',
+        email: 'karim.repair@wefix.com',
+        role: 'technician',
+        phone: '+880 1822-334455',
+        area: 'Mirpur & Uttara, Dhaka',
+        bio: 'Master technician specializing in HVAC, AC gas refill, inverter refrigerators, and heavy appliance motor troubleshooting.',
+        image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=500&q=80',
+        emailVerified: true,
+        createdAt: new Date('2026-01-12T10:00:00Z')
+    }
+];
+
+const SEED_SERVICES = [
+    {
+        title: 'iPhone 13 & 14 OLED Screen Replacement',
+        category: 'Smartphone',
+        basePrice: 65,
+        estimatedDuration: '1-2 hours',
+        serviceMode: 'Shop Drop-off',
+        serviceArea: 'Dhanmondi, Dhaka',
+        technicianName: 'Tanvir Hasan',
+        technicianEmail: 'tanvir.tech@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1598327105666-5b89351aff97?auto=format&fit=crop&w=800&q=80',
+        description: 'Genuine OLED display panel replacement with TrueTone restoration and waterproof seal installation. Fast turnaround with 90-day warranty included.',
+        createdAt: new Date('2026-02-01T10:00:00Z')
+    },
+    {
+        title: 'Samsung Galaxy Battery & Type-C Port Replacement',
+        category: 'Smartphone',
+        basePrice: 35,
+        estimatedDuration: '1 hour',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Mirpur, Dhaka',
+        technicianName: 'Karim Uddin',
+        technicianEmail: 'karim.repair@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1580910051074-3eb694886505?auto=format&fit=crop&w=800&q=80',
+        description: 'High-capacity OEM battery replacement and Type-C fast-charging port repair. Tested for thermal safety and peak battery endurance.',
+        createdAt: new Date('2026-02-02T10:00:00Z')
+    },
+    {
+        title: 'MacBook Pro Thermal Repaste & Fan Servicing',
+        category: 'Laptop & PC',
+        basePrice: 45,
+        estimatedDuration: '2-3 hours',
+        serviceMode: 'Shop Drop-off',
+        serviceArea: 'Dhanmondi, Dhaka',
+        technicianName: 'Tanvir Hasan',
+        technicianEmail: 'tanvir.tech@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=800&q=80',
+        description: 'Deep ultrasonic cleaning of dual cooling fans, Arctic MX-4 thermal paste re-application, and kernel thermal sensor calibration to eliminate thermal throttling.',
+        createdAt: new Date('2026-02-03T10:00:00Z')
+    },
+    {
+        title: 'Gaming PC Diagnostic & Motherboard Short Fix',
+        category: 'Laptop & PC',
+        basePrice: 70,
+        estimatedDuration: '1 day',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Gulshan & Banani, Dhaka',
+        technicianName: 'Tanvir Hasan',
+        technicianEmail: 'tanvir.tech@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1587202372775-e229f172b9d7?auto=format&fit=crop&w=800&q=80',
+        description: 'Comprehensive short-circuit testing, VRM mosfet replacement, BIOS reprogramming, and GPU stress stability testing using professional oscilloscope gear.',
+        createdAt: new Date('2026-02-04T10:00:00Z')
+    },
+    {
+        title: 'Split AC Deep Jet Foam Master Servicing',
+        category: 'AC',
+        basePrice: 30,
+        estimatedDuration: '2 hours',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Mirpur & Uttara, Dhaka',
+        technicianName: 'Karim Uddin',
+        technicianEmail: 'karim.repair@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&w=800&q=80',
+        description: 'High-pressure jet wash for indoor cooling coil and outdoor condenser unit. Antibacterial foam treatment, blower wheel cleaning, and drain line flush.',
+        createdAt: new Date('2026-02-05T10:00:00Z')
+    },
+    {
+        title: 'Inverter AC R32/R410 Gas Refill & Leak Repair',
+        category: 'AC',
+        basePrice: 55,
+        estimatedDuration: '2-3 hours',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Dhanmondi & Mohammadpur, Dhaka',
+        technicianName: 'Karim Uddin',
+        technicianEmail: 'karim.repair@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=800&q=80',
+        description: 'Nitrogen pressure leak detection, copper pipe silver brazing, deep vacuumization, and full factory-spec gas charging with cooling pressure verification.',
+        createdAt: new Date('2026-02-06T10:00:00Z')
+    },
+    {
+        title: 'Frost-Free Refrigerator Cooling Defrost Repair',
+        category: 'Refrigerator',
+        basePrice: 40,
+        estimatedDuration: '2-3 hours',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Mirpur, Dhaka',
+        technicianName: 'Karim Uddin',
+        technicianEmail: 'karim.repair@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1584992236310-6edddc08acff?auto=format&fit=crop&w=800&q=80',
+        description: 'Troubleshooting bi-metal sensor, defrost timer, evaporator heater, and thermostat calibration for continuous, balanced freezing and fresh cooling.',
+        createdAt: new Date('2026-02-07T10:00:00Z')
+    },
+    {
+        title: 'Inverter Compressor Relay & Eco Gas Re-Charge',
+        category: 'Refrigerator',
+        basePrice: 60,
+        estimatedDuration: '3-4 hours',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Gulshan, Dhaka',
+        technicianName: 'Karim Uddin',
+        technicianEmail: 'karim.repair@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1571175443880-49e1d25b2bc5?auto=format&fit=crop&w=800&q=80',
+        description: 'Inverter drive board diagnosis, compressor starter relay replacement, and R600a eco gas recharging with capillary pipe cleaning.',
+        createdAt: new Date('2026-02-08T10:00:00Z')
+    },
+    {
+        title: 'Smart LED TV Backlight Strip Replacement',
+        category: 'TV',
+        basePrice: 50,
+        estimatedDuration: '3-4 hours',
+        serviceMode: 'Shop Drop-off',
+        serviceArea: 'Dhanmondi, Dhaka',
+        technicianName: 'Tanvir Hasan',
+        technicianEmail: 'tanvir.tech@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1593359677879-a4bb92f829d1?auto=format&fit=crop&w=800&q=80',
+        description: 'Fix black screen with sound issues. Complete array replacement with brand-new high-brightness LED strips and uniform diffuser alignment.',
+        createdAt: new Date('2026-02-09T10:00:00Z')
+    },
+    {
+        title: '4K Smart TV Motherboard & Power Supply Fix',
+        category: 'TV',
+        basePrice: 65,
+        estimatedDuration: '1 day',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Uttara, Dhaka',
+        technicianName: 'Tanvir Hasan',
+        technicianEmail: 'tanvir.tech@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1522869635100-9f4c5e86aa37?auto=format&fit=crop&w=800&q=80',
+        description: 'Component-level board repair for TVs stuck on boot loop, no power, or dead HDMI ports. Includes firmware recovery and voltage rail stabilization.',
+        createdAt: new Date('2026-02-10T10:00:00Z')
+    },
+    {
+        title: 'Front Load Washing Machine Drum Bearing & Seal',
+        category: 'Washing Machine',
+        basePrice: 55,
+        estimatedDuration: '3-4 hours',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Mirpur & Dhanmondi, Dhaka',
+        technicianName: 'Karim Uddin',
+        technicianEmail: 'karim.repair@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1626806787461-102c1bfaaea1?auto=format&fit=crop&w=800&q=80',
+        description: 'Elimination of loud rattling noise during high-speed spin cycle. Heavy-duty SKF bearing installation with water-tight rubber gasket seal.',
+        createdAt: new Date('2026-02-11T10:00:00Z')
+    },
+    {
+        title: 'Top Load Drain Pump & PCB Control Repair',
+        category: 'Washing Machine',
+        basePrice: 35,
+        estimatedDuration: '1-2 hours',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Uttara, Dhaka',
+        technicianName: 'Karim Uddin',
+        technicianEmail: 'karim.repair@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1582735689369-4fe89db7114c?auto=format&fit=crop&w=800&q=80',
+        description: 'Fix drainage error codes (OE/E2), drain motor replacement, water inlet valve solenoid cleaning, and drum suspension vibration calibration.',
+        createdAt: new Date('2026-02-12T10:00:00Z')
+    },
+    {
+        title: 'Home Distribution Box & Circuit Breaker Overhaul',
+        category: 'Electrical',
+        basePrice: 40,
+        estimatedDuration: '2-3 hours',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Dhanmondi & Lalmatia, Dhaka',
+        technicianName: 'Karim Uddin',
+        technicianEmail: 'karim.repair@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1621905252507-b35492cc74b4?auto=format&fit=crop&w=800&q=80',
+        description: 'Replacement of faulty MCB/RCCB breakers, load balancing across phases, neutral wire short protection, and total earth grounding test.',
+        createdAt: new Date('2026-02-13T10:00:00Z')
+    },
+    {
+        title: 'Short Circuit Emergency Diagnostic & Concealed Rewiring',
+        category: 'Electrical',
+        basePrice: 45,
+        estimatedDuration: '2-4 hours',
+        serviceMode: 'Home Visit',
+        serviceArea: 'Gulshan & Banani, Dhaka',
+        technicianName: 'Karim Uddin',
+        technicianEmail: 'karim.repair@wefix.com',
+        approvalStatus: 'approved',
+        isAvailable: true,
+        image: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=800&q=80',
+        description: 'Megger insulation resistance testing, concealed wall wire fault tracing, thermal imaging for overheated junctions, and safe conduit re-routing.',
+        createdAt: new Date('2026-02-14T10:00:00Z')
+    }
+];
+
+export async function runSeedData() {
+    let techCount = 0;
+    let serviceCount = 0;
+
+    // 1. Upsert Technicians into 'user' collection
+    for (const tech of SEED_TECHNICIANS) {
+        await usersCollection.updateOne(
+            { email: tech.email },
+            { $set: tech },
+            { upsert: true }
+        );
+        techCount++;
+    }
+
+    // 2. Upsert Services into 'services' collection
+    for (const s of SEED_SERVICES) {
+        await servicesCollection.updateOne(
+            { title: s.title },
+            { $set: s },
+            { upsert: true }
+        );
+        serviceCount++;
+    }
+
+    return { techCount, serviceCount };
+}
+
+// Endpoint to trigger idempotent seed
+app.all('/api/seed', async (req, res) => {
+    try {
+        const { techCount, serviceCount } = await runSeedData();
+        return res.status(200).json({
+            success: true,
+            message: 'Idempotent seed completed successfully',
+            techniciansUpserted: techCount,
+            servicesUpserted: serviceCount
+        });
+    } catch (error) {
+        console.error('Seed error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to seed sample data',
+            error: error.message
+        });
+    }
 });
 
 // --- SERVICES ROUTES (PUBLIC) ---
