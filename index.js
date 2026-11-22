@@ -1522,8 +1522,12 @@ app.post('/api/payments/create-checkout-session', verifyToken, verifyCustomer, a
 
         const unitAmountInCents = Math.round(amountToPay * 100);
 
+        const images = [];
+        if (booking.serviceImage && typeof booking.serviceImage === 'string' && booking.serviceImage.startsWith('http')) {
+            images.push(booking.serviceImage);
+        }
+
         const session = await stripe.checkout.sessions.create({
-            payment_method_types: ['card'],
             line_items: [
                 {
                     price_data: {
@@ -1531,7 +1535,7 @@ app.post('/api/payments/create-checkout-session', verifyToken, verifyCustomer, a
                         product_data: {
                             name: `WeFix: ${booking.serviceTitle || 'Repair Service'}`,
                             description: `Technician: ${booking.technicianName} | Booking Ref: ${booking._id.toString()}`,
-                            images: booking.serviceImage ? [booking.serviceImage] : []
+                            images
                         },
                         unit_amount: unitAmountInCents
                     },
