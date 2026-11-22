@@ -582,6 +582,16 @@ app.get('/api/services', async (req, res) => {
             sortOption = { createdAt: -1 };
         }
 
+        // Ensure DB is connected before querying services
+        if (!servicesCollection) {
+            await connectDB();
+        }
+        if (!servicesCollection) {
+            return res.status(503).json({
+                success: false,
+                message: 'Database connection unavailable'
+            });
+        }
         const total = await servicesCollection.countDocuments(query);
 
         let cursor = servicesCollection.find(query).sort(sortOption);
