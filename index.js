@@ -899,14 +899,7 @@ app.patch('/api/bookings/:id/cancel', verifyToken, verifyCustomer, async (req, r
     }
 });
 
-// ==========================================
-// --- TECHNICIAN ROUTES (PROTECTED) ---
-// ==========================================
 
-/**
- * POST /api/services
- * Creates a new service under the logged-in technician (Status defaults to 'pending')
- */
 app.post('/api/services', verifyToken, verifyTechnician, async (req, res) => {
     try {
         const {
@@ -1223,7 +1216,7 @@ app.get('/api/admin/overview', verifyToken, verifyAdmin, async (req, res) => {
         const totalTechnicians = await usersCollection.countDocuments({ role: 'technician' });
         const pendingServices = await servicesCollection.countDocuments({ approvalStatus: 'pending' });
         const totalBookings = await bookingsCollection.countDocuments({});
-        
+
         const payments = await paymentsCollection.find({}).toArray();
         const totalRevenue = payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
 
