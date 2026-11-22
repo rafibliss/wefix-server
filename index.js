@@ -776,6 +776,341 @@ app.post('/api/bookings', verifyToken, verifyCustomer, async (req, res) => {
 });
 
 
+// ==========================================
+// --- TECHNICIAN ROUTES (PROTECTED) ---
+// ==========================================
+
+/**
+ * GET /api/services/technician
+ * Returns all services belonging to the logged-in technician
+ */
+app.get('/api/services/technician', verifyToken, verifyTechnician, async (req, res) => {
+    try {
+        const services = await servicesCollection
+            .find({ technicianEmail: req.user.email })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        return res.status(200).json({
+            success: true,
+            count: services.length,
+            services
+        });
+    } catch (error) {
+        console.error('Error fetching technician services:', error);
+        return res.status(500).json({ success: false, message: 'Failed to retrieve your services' });
+    }
+});
+
+/**
+ * POST /api/services
+ * Creates a new service under the logged-in technician (Status defaults to 'pending')
+ */
+app.post('/api/services', verifyToken, verifyTechnician, async (req, res) => {
+    try {
+        const {
+            title,
+            category,
+            description,
+            basePrice,
+            estimatedDuration,
+            serviceMode,
+            serviceArea,
+            image
+        } = req.body;
+
+        if (!title || !category || !description || !basePrice || !estimatedDuration || !serviceMode || !serviceArea || !image) {
+            return res.status(400).json({ success: false, message: 'All fields including image are required' });
+        }
+
+        const priceNum = Number(basePrice);
+        if (isNaN(priceNum) || priceNum <= 0) {
+            return res.status(400).json({ success: false, message: 'Base price must be a positive number' });
+        }
+
+        const newService = {
+            title: title.trim(),
+            category: category.trim(),
+            description: description.trim(),
+            basePrice: priceNum,
+            estimatedDuration: estimatedDuration.trim(),
+            serviceMode: serviceMode.trim(),
+            serviceArea: serviceArea.trim(),
+            image: image.trim(),
+            technicianName: req.user.name,
+            technicianEmail: req.user.email,
+            approvalStatus: 'pending', // Awaiting admin approval
+            isAvailable: true,
+            createdAt: new Date()
+        };
+
+        const result = await servicesCollection.insertOne(newService);
+
+        return res.status(201).json({
+            success: true,
+            message: 'Service created successfully and is waiting for admin approval',
+            serviceId: result.insertedId
+        });
+    } catch (error) {
+        console.error('Error creating service:', error);
+        return res.status(500).json({ success: false, message: 'Failed to create service' });
+    }
+});
+
+/**
+ * PATCH /api/services/:id
+ * Updates an existing service owned by the logged-in technician
+ * Resets approvalStatus back to 'pending' upon editing
+ */
+app.patch('/api/services/:id', verifyToken, verifyTechnician, async (req, res) => {
+    try {
+        const { id } = req.params;
+        let query;
+        if (ObjectId.isValid(id)) query = { _id: new ObjectId(id) };
+        else query = { id: id };
+
+        const service = await servicesCollection.findOne(query);
+        if (!service) {
+            return res.status(404).json({ success: false, message: 'Service not found' });
+        }
+
+        if (service.technicianEmail !== req.user.email) {
+            return res.status(403).json({ success: false, message: 'Forbidden: You do not own this service' });
+        }
+
+        const {
+            title,
+            category,
+            description,
+            basePrice,
+            estimatedDuration,
+            serviceMode,
+            serviceArea,
+            image
+        } = req.body;
+
+        const updateFields = {
+            updatedAt: new Date(),
+            approvalStatus: 'pending' // Rule: Editing resets status to pending
+        };
+
+        if (title) updateFields.title = title.trim();
+        if (category) updateFields.category = category.trim();
+        if (description) updateFields.description = description.trim();
+        if (basePrice) {
+            const p = Number(basePrice);
+            if (p > 0) updateFields.basePrice = p;
+        }
+        if (estimatedDuration) updateFields.estimatedDuration = estimatedDuration.trim();
+        if (serviceMode) updateFields.serviceMode = serviceMode.trim();
+        if (serviceArea) updateFields.serviceArea = serviceArea.trim();
+        if (image) updateFields.image = image.trim();
+
+        const result = await servicesCollection.findOneAndUpdate(
+            query,
+            { $set: updateFields },
+            { returnDocument: 'after' }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: 'Service updated successfully and reset to pending approval',
+            service: result.value || result
+        });
+    } catch (error) {
+        console.error('Error updating service:', error);
+        return res.status(500).json({ success: false, message: 'Failed to update service' });
+    }
+});
+
+/**
+ * DELETE /api/services/:id
+ * Deletes a service owned by the logged-in technician
+ */
+app.delete('/api/services/:id', verifyToken, verifyTechnician, async (req, res) => {
+    try {
+        const { id } = req.params;
+        let query;
+        if (ObjectId.isValid(id)) query = { _id: new ObjectId(id) };
+        else query = { id: id };
+
+        const service = await servicesCollection.findOne(query);
+        if (!service) {
+            return res.status(404).json({ success: false, message: 'Service not found' });
+        }
+
+        if (service.technicianEmail !== req.user.email) {
+            return res.status(403).json({ success: false, message: 'Forbidden: You do not own this service' });
+        }
+
+        await servicesCollection.deleteOne(query);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Service deleted successfully'
+        });
+    } catch (error) {
+        console.error('Error deleting service:', error);
+        return res.status(500).json({ success: false, message: 'Failed to delete service' });
+    }
+});
+
+/**
+ * PATCH /api/services/:id/availability
+ * Toggles isAvailable for a technician's service
+ */
+app.patch('/api/services/:id/availability', verifyToken, verifyTechnician, async (req, res) => {
+    try {
+        const { id } = req.params;
+        let query;
+        if (ObjectId.isValid(id)) query = { _id: new ObjectId(id) };
+        else query = { id: id };
+
+        const service = await servicesCollection.findOne(query);
+        if (!service) {
+            return res.status(404).json({ success: false, message: 'Service not found' });
+        }
+
+        if (service.technicianEmail !== req.user.email) {
+            return res.status(403).json({ success: false, message: 'Forbidden: You do not own this service' });
+        }
+
+        const isAvailable = Boolean(req.body.isAvailable);
+
+        await servicesCollection.updateOne(
+            query,
+            { $set: { isAvailable, updatedAt: new Date() } }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: `Service availability turned ${isAvailable ? 'ON' : 'OFF'}`,
+            isAvailable
+        });
+    } catch (error) {
+        console.error('Error toggling availability:', error);
+        return res.status(500).json({ success: false, message: 'Failed to update availability' });
+    }
+});
+
+/**
+ * GET /api/bookings/technician
+ * Returns all bookings assigned to the logged-in technician
+ */
+app.get('/api/bookings/technician', verifyToken, verifyTechnician, async (req, res) => {
+    try {
+        const query = { technicianEmail: req.user.email };
+        const { status } = req.query;
+
+        if (status && status !== 'All') {
+            query.status = status;
+        }
+
+        const bookings = await bookingsCollection.find(query).sort({ createdAt: -1 }).toArray();
+
+        return res.status(200).json({
+            success: true,
+            count: bookings.length,
+            bookings
+        });
+    } catch (error) {
+        console.error('Error fetching technician bookings:', error);
+        return res.status(500).json({ success: false, message: 'Failed to retrieve bookings' });
+    }
+});
+
+/**
+ * PATCH /api/bookings/:id/status
+ * Server-Enforced Job Status Pipeline (Challenge 3)
+ * Only the assigned technician can move the job forward
+ */
+app.patch('/api/bookings/:id/status', verifyToken, verifyTechnician, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status: targetStatus, finalAmount } = req.body;
+
+        let query;
+        if (ObjectId.isValid(id)) query = { _id: new ObjectId(id) };
+        else query = { id: id };
+
+        const booking = await bookingsCollection.findOne(query);
+        if (!booking) {
+            return res.status(404).json({ success: false, message: 'Booking not found' });
+        }
+
+        // Ownership enforcement
+        if (booking.technicianEmail !== req.user.email) {
+            return res.status(403).json({
+                success: false,
+                message: 'Forbidden: You are not assigned to this job'
+            });
+        }
+
+        const currentStatus = booking.status;
+
+        // Strict state transitions:
+        // requested -> accepted OR rejected
+        // accepted -> in-progress
+        // in-progress -> completed (requires finalAmount > 0)
+        let isValidTransition = false;
+
+        if (currentStatus === 'requested' && (targetStatus === 'accepted' || targetStatus === 'rejected')) {
+            isValidTransition = true;
+        } else if (currentStatus === 'accepted' && targetStatus === 'in-progress') {
+            isValidTransition = true;
+        } else if (currentStatus === 'in-progress' && targetStatus === 'completed') {
+            isValidTransition = true;
+        }
+
+        if (!isValidTransition) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid status transition from '${currentStatus}' to '${targetStatus}'. Illegal step rejected by server.`
+            });
+        }
+
+        const updateSet = {
+            status: targetStatus,
+            updatedAt: new Date()
+        };
+
+        // When moving to 'completed', validate finalAmount
+        if (targetStatus === 'completed') {
+            const amountNum = Number(finalAmount);
+            if (!finalAmount || isNaN(amountNum) || amountNum <= 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Final amount must be a number greater than 0 when completing a job'
+                });
+            }
+            updateSet.finalAmount = amountNum;
+        }
+
+        const result = await bookingsCollection.findOneAndUpdate(
+            query,
+            {
+                $set: updateSet,
+                $push: {
+                    statusHistory: { status: targetStatus, changedAt: new Date() }
+                }
+            },
+            { returnDocument: 'after' }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: `Job status successfully updated to '${targetStatus}'`,
+            booking: result.value || result
+        });
+    } catch (error) {
+        console.error('Error updating booking status:', error);
+        return res.status(500).json({ success: false, message: 'Failed to update job status' });
+    }
+});
+
+// ==========================================
+// --- USER PROFILE ROUTE ---
+// ==========================================
 app.patch('/api/users/profile', verifyToken, async (req, res) => {
     try {
         const { name, phone, area, bio, image } = req.body;
