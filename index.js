@@ -318,10 +318,10 @@ app.get('/api/services/:id', async (req, res) => {
 
         const service = await servicesCollection.findOne(query);
 
-        if (!service) {
+        if (!service || service.approvalStatus !== 'approved' || service.isAvailable === false) {
             return res.status(404).json({
                 success: false,
-                message: 'Service not found'
+                message: 'Service not found or not currently available'
             });
         }
 
@@ -349,6 +349,129 @@ app.get('/api/services/:id', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Failed to retrieve service details'
+        });
+    }
+});
+
+// ==========================================
+// --- BOOKINGS ROUTES ---
+// ==========================================
+
+/**
+ * POST /api/bookings
+ * Submits a new repair request (Customer only)
+ * Enforces duplicate active request prevention and snapshot copying
+ */
+app.post('/api/bookings', verifyToken, verifyCustomer, async (req, res) => {
+    try {
+        const { serviceId, customerPhone, address, preferredDate, problemDescription } = req.body;
+
+        // Validation
+        if (!serviceId) {
+            return res.status(400).json({ success: false, message: 'Service ID is required' });
+        }
+        if (!customerPhone || typeof customerPhone !== 'string' || !customerPhone.trim()) {
+            return res.status(400).json({ success: false, message: 'Valid contact phone number is required' });
+        }
+        if (!address || typeof address !== 'string' || !address.trim()) {
+            return res.status(400).json({ success: false, message: 'Service/pickup address is required' });
+        }
+        if (!preferredDate) {
+            return res.status(400).json({ success: false, message: 'Preferred service date is required' });
+        }
+
+        const dateObj = new Date(preferredDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (isNaN(dateObj.getTime()) || dateObj < today) {
+            return res.status(400).json({ success: false, message: 'Preferred date must be today or a future date' });
+        }
+
+        if (!problemDescription || typeof problemDescription !== 'string' || problemDescription.trim().length < 20) {
+            return res.status(400).json({
+                success: false,
+                message: 'Problem description must be at least 20 characters long'
+            });
+        }
+
+        // Verify service exists and is approved & available
+        let serviceQuery;
+        if (ObjectId.isValid(serviceId)) {
+            serviceQuery = { _id: new ObjectId(serviceId) };
+        } else {
+            serviceQuery = { id: serviceId };
+        }
+
+        const service = await servicesCollection.findOne(serviceQuery);
+        if (!service || service.approvalStatus !== 'approved' || service.isAvailable === false) {
+            return res.status(404).json({
+                success: false,
+                message: 'This service is currently unavailable for booking'
+            });
+        }
+
+        // Business Rule: Technician cannot request their own service
+        if (service.technicianEmail === req.user.email) {
+            return res.status(400).json({
+                success: false,
+                message: 'You cannot request your own service'
+            });
+        }
+
+        // Business Rule: Duplicate active request prevention
+        // A customer cannot have two active requests (requested, accepted or in-progress) for the same service
+        const existingActiveBooking = await bookingsCollection.findOne({
+            $or: [
+                { serviceId: service._id.toString() },
+                { serviceId: serviceId }
+            ],
+            customerEmail: req.user.email,
+            status: { $in: ['requested', 'accepted', 'in-progress'] }
+        });
+
+        if (existingActiveBooking) {
+            return res.status(409).json({
+                success: false,
+                message: 'You already have an active request for this service'
+            });
+        }
+
+        // Snapshot fields from service & user
+        const newBooking = {
+            serviceId: service._id.toString(),
+            serviceTitle: service.title,
+            serviceImage: service.image || '',
+            category: service.category,
+            basePrice: Number(service.basePrice),
+            technicianName: service.technicianName,
+            technicianEmail: service.technicianEmail,
+            customerName: req.user.name,
+            customerEmail: req.user.email,
+            customerPhone: customerPhone.trim(),
+            address: address.trim(),
+            preferredDate: dateObj,
+            problemDescription: problemDescription.trim(),
+            status: 'requested',
+            finalAmount: Number(service.basePrice), // Initial final amount equals base price
+            paymentStatus: 'unpaid',
+            createdAt: new Date(),
+            statusHistory: [
+                { status: 'requested', changedAt: new Date() }
+            ]
+        };
+
+        const result = await bookingsCollection.insertOne(newBooking);
+
+        return res.status(201).json({
+            success: true,
+            message: 'Repair request submitted successfully',
+            bookingId: result.insertedId
+        });
+    } catch (error) {
+        console.error('Error creating booking request:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Internal server error processing repair request'
         });
     }
 });
