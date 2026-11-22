@@ -513,10 +513,19 @@ export async function runSeedData() {
 // Endpoint to trigger idempotent seed
 app.all('/api/seed', async (req, res) => {
     try {
+        const { makeAdmin } = req.query;
+        if (makeAdmin && typeof makeAdmin === 'string') {
+            await usersCollection.updateOne(
+                { email: makeAdmin.trim() },
+                { $set: { role: 'admin', updatedAt: new Date() } }
+            );
+        }
+
         const { techCount, serviceCount } = await runSeedData();
         return res.status(200).json({
             success: true,
             message: 'Idempotent seed completed successfully',
+            promotedAdmin: makeAdmin || null,
             techniciansUpserted: techCount,
             servicesUpserted: serviceCount
         });
@@ -1105,6 +1114,238 @@ app.patch('/api/bookings/:id/status', verifyToken, verifyTechnician, async (req,
     } catch (error) {
         console.error('Error updating booking status:', error);
         return res.status(500).json({ success: false, message: 'Failed to update job status' });
+    }
+});
+
+// ==========================================
+// --- ADMIN ROUTES (PROTECTED) ---
+// ==========================================
+
+/**
+ * GET /api/admin/overview
+ * Returns aggregate metrics for admin overview
+ */
+app.get('/api/admin/overview', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const totalUsers = await usersCollection.countDocuments({});
+        const totalTechnicians = await usersCollection.countDocuments({ role: 'technician' });
+        const pendingServices = await servicesCollection.countDocuments({ approvalStatus: 'pending' });
+        const totalBookings = await bookingsCollection.countDocuments({});
+        
+        const payments = await paymentsCollection.find({}).toArray();
+        const totalRevenue = payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+
+        return res.status(200).json({
+            success: true,
+            totalUsers,
+            totalTechnicians,
+            pendingServices,
+            totalBookings,
+            totalRevenue
+        });
+    } catch (error) {
+        console.error('Error fetching admin overview:', error);
+        return res.status(500).json({ success: false, message: 'Failed to fetch admin overview' });
+    }
+});
+
+/**
+ * GET /api/admin/users
+ * Returns all registered users
+ */
+app.get('/api/admin/users', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const users = await usersCollection
+            .find({}, { projection: { password: 0 } })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        return res.status(200).json({
+            success: true,
+            count: users.length,
+            users
+        });
+    } catch (error) {
+        console.error('Error fetching admin users:', error);
+        return res.status(500).json({ success: false, message: 'Failed to retrieve users' });
+    }
+});
+
+/**
+ * PATCH /api/admin/users/:id/role
+ * Allows an admin to change a user's role (customer / technician / admin)
+ * Strictly prevents an admin from changing their own role
+ */
+app.patch('/api/admin/users/:id/role', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { role: newRole } = req.body;
+
+        if (!newRole || !['customer', 'technician', 'admin'].includes(newRole)) {
+            return res.status(400).json({
+                success: false,
+                message: "Role must be 'customer', 'technician', or 'admin'"
+            });
+        }
+
+        let query;
+        if (ObjectId.isValid(id)) query = { _id: new ObjectId(id) };
+        else query = { id: id };
+
+        const targetUser = await usersCollection.findOne(query);
+        if (!targetUser) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        // Strict Rule: Admin cannot modify their own role
+        const targetIdStr = targetUser._id ? targetUser._id.toString() : targetUser.id;
+        const reqUserIdStr = req.user._id ? req.user._id.toString() : req.user.id;
+
+        if (targetUser.email === req.user.email || targetIdStr === reqUserIdStr) {
+            return res.status(400).json({
+                success: false,
+                message: 'Forbidden: Administrators cannot modify their own role'
+            });
+        }
+
+        const result = await usersCollection.findOneAndUpdate(
+            query,
+            { $set: { role: newRole, updatedAt: new Date() } },
+            { returnDocument: 'after' }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: `User role successfully updated to '${newRole}'`,
+            user: result.value || result
+        });
+    } catch (error) {
+        console.error('Error updating user role:', error);
+        return res.status(500).json({ success: false, message: 'Failed to update user role' });
+    }
+});
+
+/**
+ * GET /api/admin/services
+ * Returns all services across all technicians with optional approvalStatus filter
+ */
+app.get('/api/admin/services', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const { approvalStatus } = req.query;
+        const query = {};
+
+        if (approvalStatus && approvalStatus !== 'all') {
+            query.approvalStatus = approvalStatus;
+        }
+
+        const services = await servicesCollection
+            .find(query)
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        return res.status(200).json({
+            success: true,
+            count: services.length,
+            services
+        });
+    } catch (error) {
+        console.error('Error fetching admin services:', error);
+        return res.status(500).json({ success: false, message: 'Failed to retrieve services' });
+    }
+});
+
+/**
+ * PATCH /api/admin/services/:id/approval
+ * Approves or Rejects a technician service
+ */
+app.patch('/api/admin/services/:id/approval', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { approvalStatus } = req.body;
+
+        if (!approvalStatus || !['approved', 'rejected'].includes(approvalStatus)) {
+            return res.status(400).json({
+                success: false,
+                message: "Approval status must be either 'approved' or 'rejected'"
+            });
+        }
+
+        let query;
+        if (ObjectId.isValid(id)) query = { _id: new ObjectId(id) };
+        else query = { id: id };
+
+        const result = await servicesCollection.findOneAndUpdate(
+            query,
+            { $set: { approvalStatus, updatedAt: new Date() } },
+            { returnDocument: 'after' }
+        );
+
+        if (!result) {
+            return res.status(404).json({ success: false, message: 'Service not found' });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: `Service successfully ${approvalStatus}`,
+            service: result.value || result
+        });
+    } catch (error) {
+        console.error('Error updating service approval status:', error);
+        return res.status(500).json({ success: false, message: 'Failed to update approval status' });
+    }
+});
+
+/**
+ * GET /api/admin/bookings
+ * Returns all bookings across the platform
+ */
+app.get('/api/admin/bookings', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const { status } = req.query;
+        const query = {};
+
+        if (status && status !== 'All') {
+            query.status = status;
+        }
+
+        const bookings = await bookingsCollection
+            .find(query)
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        return res.status(200).json({
+            success: true,
+            count: bookings.length,
+            bookings
+        });
+    } catch (error) {
+        console.error('Error fetching admin bookings:', error);
+        return res.status(500).json({ success: false, message: 'Failed to retrieve bookings' });
+    }
+});
+
+/**
+ * GET /api/admin/payments
+ * Returns all payments and total revenue across the platform
+ */
+app.get('/api/admin/payments', verifyToken, verifyAdmin, async (req, res) => {
+    try {
+        const payments = await paymentsCollection
+            .find({})
+            .sort({ paidAt: -1 })
+            .toArray();
+
+        const totalRevenue = payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+
+        return res.status(200).json({
+            success: true,
+            count: payments.length,
+            totalRevenue,
+            payments
+        });
+    } catch (error) {
+        console.error('Error fetching admin payments:', error);
+        return res.status(500).json({ success: false, message: 'Failed to retrieve payments' });
     }
 });
 
