@@ -610,6 +610,36 @@ app.get('/api/services', async (req, res) => {
 });
 
 /**
+ * GET /api/services/technician
+ * Returns all services belonging to the logged-in technician
+ * (CRITICAL: Registered BEFORE /api/services/:id so Express does not capture 'technician' as an :id parameter)
+ */
+app.get('/api/services/technician', verifyToken, verifyTechnician, async (req, res) => {
+    try {
+        const email = (req.user.email || '').toLowerCase().trim();
+        const services = await servicesCollection
+            .find({
+                $or: [
+                    { technicianEmail: email },
+                    { technicianEmail: { $regex: new RegExp(`^${email}$`, 'i') } },
+                    { technicianEmail: req.user.email }
+                ]
+            })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        return res.status(200).json({
+            success: true,
+            count: services.length,
+            services
+        });
+    } catch (error) {
+        console.error('Error fetching technician services:', error);
+        return res.status(500).json({ success: false, message: 'Failed to retrieve your services' });
+    }
+});
+
+/**
  * GET /api/services/:id
  * Returns a single approved service with technician details
  */
@@ -874,28 +904,6 @@ app.patch('/api/bookings/:id/cancel', verifyToken, verifyCustomer, async (req, r
 // ==========================================
 
 /**
- * GET /api/services/technician
- * Returns all services belonging to the logged-in technician
- */
-app.get('/api/services/technician', verifyToken, verifyTechnician, async (req, res) => {
-    try {
-        const services = await servicesCollection
-            .find({ technicianEmail: req.user.email })
-            .sort({ createdAt: -1 })
-            .toArray();
-
-        return res.status(200).json({
-            success: true,
-            count: services.length,
-            services
-        });
-    } catch (error) {
-        console.error('Error fetching technician services:', error);
-        return res.status(500).json({ success: false, message: 'Failed to retrieve your services' });
-    }
-});
-
-/**
  * POST /api/services
  * Creates a new service under the logged-in technician (Status defaults to 'pending')
  */
@@ -931,7 +939,7 @@ app.post('/api/services', verifyToken, verifyTechnician, async (req, res) => {
             serviceArea: serviceArea.trim(),
             image: image.trim(),
             technicianName: req.user.name,
-            technicianEmail: req.user.email,
+            technicianEmail: (req.user.email || '').toLowerCase().trim(),
             approvalStatus: 'pending', // Awaiting admin approval
             isAvailable: true,
             createdAt: new Date()
@@ -967,7 +975,7 @@ app.patch('/api/services/:id', verifyToken, verifyTechnician, async (req, res) =
             return res.status(404).json({ success: false, message: 'Service not found' });
         }
 
-        if (service.technicianEmail !== req.user.email) {
+        if (service.technicianEmail?.toLowerCase().trim() !== req.user.email?.toLowerCase().trim()) {
             return res.status(403).json({ success: false, message: 'Forbidden: You do not own this service' });
         }
 
@@ -1032,7 +1040,7 @@ app.delete('/api/services/:id', verifyToken, verifyTechnician, async (req, res) 
             return res.status(404).json({ success: false, message: 'Service not found' });
         }
 
-        if (service.technicianEmail !== req.user.email) {
+        if (service.technicianEmail?.toLowerCase().trim() !== req.user.email?.toLowerCase().trim()) {
             return res.status(403).json({ success: false, message: 'Forbidden: You do not own this service' });
         }
 
@@ -1064,7 +1072,7 @@ app.patch('/api/services/:id/availability', verifyToken, verifyTechnician, async
             return res.status(404).json({ success: false, message: 'Service not found' });
         }
 
-        if (service.technicianEmail !== req.user.email) {
+        if (service.technicianEmail?.toLowerCase().trim() !== req.user.email?.toLowerCase().trim()) {
             return res.status(403).json({ success: false, message: 'Forbidden: You do not own this service' });
         }
 
