@@ -31,7 +31,10 @@ if (!uri) {
     console.warn("WARNING: MONGODB_URI is not set in environment variables!");
 }
 
-const client = new MongoClient(uri);
+let client = null;
+if (uri) {
+    client = new MongoClient(uri);
+}
 let db = null;
 
 // Collections references
@@ -1750,6 +1753,12 @@ app.use((err, req, res, next) => {
     });
 });
 
-app.listen(port, () => {
-    console.log(`FixMate Server is running on port ${port}`);
-});
+// Export the Express app for serverless platforms like Vercel
+export default app;
+
+// Only start a listening server when running locally (e.g., during development)
+if (!process.env.VERCEL) {
+    app.listen(port, () => {
+        console.log(`FixMate Server is running on port ${port}`);
+    });
+}
