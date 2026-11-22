@@ -518,22 +518,13 @@ export async function runSeedData() {
     return { techCount, serviceCount };
 }
 
-// Endpoint to trigger idempotent seed
+// Endpoint to trigger idempotent seed (Safe & sanitized: no unauthenticated role escalation)
 app.all('/api/seed', async (req, res) => {
     try {
-        const { makeAdmin } = req.query;
-        if (makeAdmin && typeof makeAdmin === 'string') {
-            await usersCollection.updateOne(
-                { email: makeAdmin.trim() },
-                { $set: { role: 'admin', updatedAt: new Date() } }
-            );
-        }
-
         const { techCount, serviceCount } = await runSeedData();
         return res.status(200).json({
             success: true,
             message: 'Idempotent seed completed successfully',
-            promotedAdmin: makeAdmin || null,
             techniciansUpserted: techCount,
             servicesUpserted: serviceCount
         });
