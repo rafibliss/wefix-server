@@ -1582,7 +1582,7 @@ app.post('/api/payments/create-checkout-session', verifyToken, verifyCustomer, a
  * GET /api/payments/verify
  * Verifies a paid Stripe session and records the transaction idempotently
  */
-app.get('/api/payments/verify', verifyToken, async (req, res) => {
+app.get('/api/payments/verify', async (req, res) => {
     try {
         if (!stripe) {
             return res.status(500).json({ success: false, message: 'Stripe is not configured' });
